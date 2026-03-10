@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>X-Wing Death Star Run - Phase 2</title>
+    <title>X-Wing Death Star Run - Phase 3</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
       html,
@@ -38,7 +38,7 @@
   <body>
     <div id="app"></div>
     <div class="overlay">
-      Phase 2: A/D roll · ←/→ left/right · ↑/↓ up/down · W/S pitch
+      Phase 3: Trench run · A/D roll · ←/→ ↑/↓ move · W/S pitch
     </div>
 
     <!-- Three.js from CDN -->
@@ -63,12 +63,98 @@
       renderer.setPixelRatio(window.devicePixelRatio || 1);
       app.appendChild(renderer.domElement);
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
       scene.add(ambientLight);
 
       const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
       keyLight.position.set(6, 10, 10);
       scene.add(keyLight);
+
+      // --- Phase 3: Trench environment (uneven, endless) ---
+      const trenchMaterial = new THREE.MeshStandardMaterial({
+        color: 0x374151,
+        metalness: 0.6,
+        roughness: 0.7,
+      });
+      const trenchDarkMaterial = new THREE.MeshStandardMaterial({
+        color: 0x1f2937,
+        metalness: 0.5,
+        roughness: 0.8,
+      });
+
+      const trenchWidth = 32;
+      const CHUNK_LENGTH = 80;
+      const NUM_CHUNKS = 5;
+      const trenchChunks = [];
+      let chunkSeed = 0;
+
+      function seededRandom(seed) {
+        const x = Math.sin(seed * 12.9898) * 43758.5453;
+        return x - Math.floor(x);
+      }
+
+      function createTrenchChunk(zOffset) {
+        const group = new THREE.Group();
+        group.position.z = zOffset;
+
+        const floorBaseY = -6.5;
+        const segmentLength = CHUNK_LENGTH / 6;
+
+        for (let i = 0; i < 6; i++) {
+          const segZ = (i - 2.5) * segmentLength;
+          const yOff = (seededRandom(chunkSeed + i * 7) - 0.5) * 2.5;
+          const floorSeg = new THREE.Mesh(
+            new THREE.BoxGeometry(trenchWidth, 1.2, segmentLength + 2),
+            i % 2 === 0 ? trenchMaterial : trenchDarkMaterial
+          );
+          floorSeg.position.set(0, floorBaseY + yOff, segZ);
+          group.add(floorSeg);
+        }
+
+        const wallThickness = 2;
+        for (let w = 0; w < 4; w++) {
+          const wallZ = (w - 1.5) * (CHUNK_LENGTH / 3);
+          const wallH = 14 + seededRandom(chunkSeed + w * 11) * 6;
+          const leftWall = new THREE.Mesh(
+            new THREE.BoxGeometry(wallThickness, wallH, CHUNK_LENGTH / 2 + 4),
+            trenchMaterial
+          );
+          leftWall.position.set(-trenchWidth / 2 - wallThickness / 2, (wallH / 2) - 6, wallZ);
+          group.add(leftWall);
+
+          const rightWall = new THREE.Mesh(
+            new THREE.BoxGeometry(wallThickness, wallH, CHUNK_LENGTH / 2 + 4),
+            trenchMaterial
+          );
+          rightWall.position.set(trenchWidth / 2 + wallThickness / 2, (wallH / 2) - 6, wallZ);
+          group.add(rightWall);
+        }
+
+        for (let b = 0; b < 3; b++) {
+          const bx = (seededRandom(chunkSeed + b * 13) - 0.5) * trenchWidth * 0.6;
+          const bz = (seededRandom(chunkSeed + b * 17) - 0.5) * CHUNK_LENGTH * 0.5;
+          const bh = 0.5 + seededRandom(chunkSeed + b * 19) * 2;
+          const bump = new THREE.Mesh(
+            new THREE.BoxGeometry(4, bh, 3),
+            trenchDarkMaterial
+          );
+          bump.position.set(bx, floorBaseY + bh / 2, bz);
+          group.add(bump);
+        }
+
+        group.position.z = zOffset;
+        return group;
+      }
+
+      const trenchGroup = new THREE.Group();
+      for (let i = 0; i < NUM_CHUNKS; i++) {
+        const baseZ = -i * CHUNK_LENGTH;
+        const chunk = createTrenchChunk(baseZ);
+        trenchChunks.push({ group: chunk, baseZ });
+        trenchGroup.add(chunk);
+        chunkSeed += 31;
+      }
+      scene.add(trenchGroup);
 
       // --- X-Wing inspired ship (very low-poly, uses simple primitives) ---
 
@@ -345,6 +431,19 @@
         if (keys.moveUp) ship.position.y += moveSpeed * dt;
         ship.position.x = Math.max(-BOUNDS_X, Math.min(BOUNDS_X, ship.position.x));
         ship.position.y = Math.max(-BOUNDS_Y, Math.min(BOUNDS_Y, ship.position.y));
+
+        // Recycle trench chunks for endless flight (ship flies -Z)
+        const rearmost = trenchChunks.reduce((a, c) => (c.baseZ > a.baseZ ? c : a));
+        if (ship.position.z < rearmost.baseZ - CHUNK_LENGTH / 2) {
+          const frontmost = trenchChunks.reduce((a, c) => (c.baseZ < a.baseZ ? c : a));
+          const newBaseZ = frontmost.baseZ - CHUNK_LENGTH;
+          trenchGroup.remove(rearmost.group);
+          const newChunk = createTrenchChunk(newBaseZ);
+          rearmost.group = newChunk;
+          rearmost.baseZ = newBaseZ;
+          trenchGroup.add(newChunk);
+          chunkSeed += 31;
+        }
 
         // Stars move opposite to ship for "flying through space" feel
         stars.position.addScaledVector(forward, -forwardSpeed * dt);
