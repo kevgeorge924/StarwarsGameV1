@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>X-Wing Death Star Run - Phase 1</title>
+    <title>X-Wing Death Star Run - Phase 2</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <style>
       html,
@@ -38,7 +38,7 @@
   <body>
     <div id="app"></div>
     <div class="overlay">
-      Phase 1: Static X-Wing display (no controls yet)
+      Phase 2: A/D roll · ←/→ left/right · ↑/↓ up/down · W/S pitch
     </div>
 
     <!-- Three.js from CDN -->
@@ -141,8 +141,8 @@
       // Build wings explicitly so that on each SIDE:
       // - one wing is swept slightly forward
       // - the other wing is swept slightly backward
-      // This makes it very obvious that the wings on each side
-      // point in opposite directions along the ship.
+      // Wings open/close based on ship roll (stored for per-frame updates)
+      const wingRefs = [];
       function addSideWings(side) {
         const span = 2.5 * side; // left: -2.5, right: 2.5
         const wingLength = 3.4;
@@ -152,39 +152,31 @@
         const wingGeom = new THREE.BoxGeometry(wingLength, wingThickness, wingWidth);
         const panelGeom = new THREE.BoxGeometry(1.6, wingThickness * 1.2, wingWidth * 0.9);
 
-        // Z positions for obvious "forward" and "backward" sweep
         const zForward = 0.9;
         const zBackward = -0.9;
         const yOffset = 0.48;
 
-        // Upper wing (swept forward on left, backward on right)
         const upperWing = new THREE.Mesh(wingGeom, wingFrameMaterial);
         const upperPanel = new THREE.Mesh(panelGeom, wingPanelMaterial);
-
         const upperZ = side === -1 ? zForward : zBackward;
         upperWing.position.set(span, yOffset, upperZ);
         upperPanel.position.copy(upperWing.position);
         upperPanel.position.x += 0.18;
+        const upperBaseAngle = side === -1 ? -0.32 : 0.32;
+        wingRefs.push({ mesh: upperWing, panel: upperPanel, baseAngle: upperBaseAngle });
 
-        upperWing.rotation.z = side === -1 ? -0.32 : 0.32;
-        upperPanel.rotation.copy(upperWing.rotation);
-
-        // Lower wing (swept backward on left, forward on right)
         const lowerWing = new THREE.Mesh(wingGeom, wingFrameMaterial);
         const lowerPanel = new THREE.Mesh(panelGeom, wingPanelMaterial);
-
         const lowerZ = side === -1 ? zBackward : zForward;
         lowerWing.position.set(span, -yOffset, lowerZ);
         lowerPanel.position.copy(lowerWing.position);
         lowerPanel.position.x += 0.18;
-
-        lowerWing.rotation.z = side === -1 ? 0.32 : -0.32;
-        lowerPanel.rotation.copy(lowerWing.rotation);
+        const lowerBaseAngle = side === -1 ? 0.32 : -0.32;
+        wingRefs.push({ mesh: lowerWing, panel: lowerPanel, baseAngle: lowerBaseAngle });
 
         ship.add(upperWing, upperPanel, lowerWing, lowerPanel);
       }
 
-      // Left side (side = -1) and right side (side = +1)
       addSideWings(-1);
       addSideWings(1);
 
@@ -245,17 +237,67 @@
       addCannon(-cannonXOffset, -cannonYOffset, cannonZ);
 
       ship.position.set(0, 0.2, 0);
-      ship.rotation.y = Math.PI; // face toward camera
+      ship.rotation.y = Math.PI; // face into screen (forward = -Z)
       scene.add(ship);
 
+      // --- Phase 2: Input & movement ---
+      const keys = {
+        rollLeft: false, rollRight: false,
+        moveLeft: false, moveRight: false, moveUp: false, moveDown: false,
+        pitchUp: false, pitchDown: false
+      };
+      const rollRate = 1.2;
+      const moveSpeed = 14;
+      const pitchRate = 0.8;
+      const forwardSpeed = 12;
+      // Screen bounds: ship stays within view (world units)
+      const BOUNDS_X = 14;
+      const BOUNDS_Y = 8;
+
+      function onKeyDown(e) {
+        if (["KeyA","KeyD","KeyW","KeyS","ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.code)) e.preventDefault();
+        switch (e.code) {
+          case "KeyA": keys.rollLeft = true; break;
+          case "KeyD": keys.rollRight = true; break;
+          case "ArrowLeft": keys.moveLeft = true; break;
+          case "ArrowRight": keys.moveRight = true; break;
+          case "ArrowUp": keys.moveUp = true; break;
+          case "ArrowDown": keys.moveDown = true; break;
+          case "KeyW": keys.pitchUp = true; break;
+          case "KeyS": keys.pitchDown = true; break;
+        }
+      }
+      function onKeyUp(e) {
+        switch (e.code) {
+          case "KeyA": keys.rollLeft = false; break;
+          case "KeyD": keys.rollRight = false; break;
+          case "ArrowLeft": keys.moveLeft = false; break;
+          case "ArrowRight": keys.moveRight = false; break;
+          case "ArrowUp": keys.moveUp = false; break;
+          case "ArrowDown": keys.moveDown = false; break;
+          case "KeyW": keys.pitchUp = false; break;
+          case "KeyS": keys.pitchDown = false; break;
+        }
+      }
+      window.addEventListener("keydown", onKeyDown);
+      window.addEventListener("keyup", onKeyUp);
+
+      const forward = new THREE.Vector3(0, 0, 1);
+      const right = new THREE.Vector3(1, 0, 0);
+      const cameraTarget = new THREE.Vector3();
+      const lookTarget = new THREE.Vector3();
+      const cameraSmooth = 0.08;
+      const cameraDistance = 8;
+      const cameraHeight = 2;
+
       const starGeometry = new THREE.BufferGeometry();
-      const starCount = 600;
+      const starCount = 1200;
       const starPositions = new Float32Array(starCount * 3);
       for (let i = 0; i < starCount; i++) {
         const i3 = i * 3;
-        starPositions[i3 + 0] = (Math.random() - 0.5) * 80;
-        starPositions[i3 + 1] = (Math.random() - 0.5) * 80;
-        starPositions[i3 + 2] = -Math.random() * 200;
+        starPositions[i3 + 0] = (Math.random() - 0.5) * 120;
+        starPositions[i3 + 1] = (Math.random() - 0.5) * 120;
+        starPositions[i3 + 2] = (Math.random() - 0.5) * 400 - 100;
       }
       starGeometry.setAttribute(
         "position",
@@ -263,7 +305,7 @@
       );
       const starMaterial = new THREE.PointsMaterial({
         color: 0xffffff,
-        size: 0.06,
+        size: 0.05,
       });
       const stars = new THREE.Points(starGeometry, starMaterial);
       scene.add(stars);
@@ -278,11 +320,58 @@
 
       window.addEventListener("resize", onResize);
 
+      let lastTime = performance.now();
       function animate() {
         requestAnimationFrame(animate);
+        const now = performance.now();
+        const dt = Math.min((now - lastTime) / 1000, 0.1);
+        lastTime = now;
 
-        ship.rotation.y = Math.PI + Math.sin(Date.now() * 0.0007) * 0.15;
-        ship.rotation.z = Math.sin(Date.now() * 0.0012) * 0.03;
+        // Apply input to ship rotation (roll, pitch)
+        if (keys.rollLeft) ship.rotation.z += rollRate * dt;
+        if (keys.rollRight) ship.rotation.z -= rollRate * dt;
+        if (keys.pitchUp) ship.rotation.x -= pitchRate * dt;
+        if (keys.pitchDown) ship.rotation.x += pitchRate * dt;
+
+        // Move ship forward along its nose direction
+        forward.set(0, 0, 1);
+        forward.applyQuaternion(ship.quaternion);
+        ship.position.addScaledVector(forward, forwardSpeed * dt);
+
+        // Move left/right and up/down on screen (arrow keys), clamped to bounds
+        if (keys.moveLeft) ship.position.x -= moveSpeed * dt;
+        if (keys.moveRight) ship.position.x += moveSpeed * dt;
+        if (keys.moveDown) ship.position.y -= moveSpeed * dt;
+        if (keys.moveUp) ship.position.y += moveSpeed * dt;
+        ship.position.x = Math.max(-BOUNDS_X, Math.min(BOUNDS_X, ship.position.x));
+        ship.position.y = Math.max(-BOUNDS_Y, Math.min(BOUNDS_Y, ship.position.y));
+
+        // Stars move opposite to ship for "flying through space" feel
+        stars.position.addScaledVector(forward, -forwardSpeed * dt);
+        if (keys.moveLeft) stars.position.x += moveSpeed * dt;
+        if (keys.moveRight) stars.position.x -= moveSpeed * dt;
+        if (keys.moveUp) stars.position.y -= moveSpeed * dt;
+        if (keys.moveDown) stars.position.y += moveSpeed * dt;
+
+        // Wings open/close based on roll: closed when level, open when banking
+        const roll = ship.rotation.z;
+        const spread = Math.min(1, Math.abs(roll) * 2.2);
+        const wingAngle = 0.08 + spread * 0.5;
+        wingRefs.forEach(({ mesh, panel, baseAngle }) => {
+          const sign = baseAngle >= 0 ? 1 : -1;
+          mesh.rotation.z = sign * wingAngle;
+          panel.rotation.x = mesh.rotation.x;
+          panel.rotation.y = mesh.rotation.y;
+          panel.rotation.z = mesh.rotation.z;
+        });
+
+        // Camera: behind and above ship, smooth follow
+        forward.set(0, 0, 1);
+        forward.applyQuaternion(ship.quaternion);
+        cameraTarget.copy(ship.position).addScaledVector(forward, -cameraDistance).add(new THREE.Vector3(0, cameraHeight, 0));
+        camera.position.lerp(cameraTarget, cameraSmooth);
+        lookTarget.copy(ship.position).addScaledVector(forward, 3);
+        camera.lookAt(lookTarget);
 
         renderer.render(scene, camera);
       }
